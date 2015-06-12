@@ -295,6 +295,8 @@ class NodeLog(StoredObject):
     params = fields.DictionaryField()
     should_hide = fields.BooleanField(default=False)
 
+    was_connected_to = fields.ForeignField('node', list=True)
+
     user = fields.ForeignField('user', backref='created')
     api_key = fields.ForeignField('apikey', backref='created')
     foreign_user = fields.StringField()
@@ -425,6 +427,7 @@ class NodeLog(StoredObject):
             'fullname': privacy_info_handle(fullname, anonymous, name=True),
             'registered': user.is_registered,
         }
+
 
 class Tag(StoredObject):
 
@@ -1316,7 +1319,7 @@ class Node(GuidStoredObject, AddonModelMixin, IdentifierMixin):
         ids = [self._id] + [n._id
                             for n in self.get_descendants_recursive()
                             if n.can_view(auth)]
-        query = Q('__backrefs.logged.node.logs', 'in', ids) & Q('should_hide', 'ne', True)
+        query = Q('__backrefs.logged.node.logs', 'in', ids)
         return NodeLog.find(query).sort('-_id')
 
     @property
@@ -2264,6 +2267,14 @@ class Node(GuidStoredObject, AddonModelMixin, IdentifierMixin):
 
             contributor_added.send(self, contributor=contributor, auth=auth)
             return True
+
+        #Permissions must be overridden if changed when contributor is added to parent he/she is already on a child of.
+        elif contrib_to_add in self.contributors and permissions is not None:
+            self.set_permissions(contrib_to_add, permissions)
+            if save:
+                self.save()
+
+            return False
         else:
             return False
 
@@ -2630,13 +2641,6 @@ class PrivateLink(StoredObject):
             offset = 20 if node.parent_node is not None else 0
             return offset + self.node_scale(node.parent_node)
 
-    def node_icon(self, node):
-        if node.category == 'project':
-            node_type = "reg-project" if node.is_registration else "project"
-        else:
-            node_type = "reg-component" if node.is_registration else "component"
-        return "/static/img/hgrid/{0}.png".format(node_type)
-
     def to_json(self):
         return {
             "id": self._id,
@@ -2644,7 +2648,7 @@ class PrivateLink(StoredObject):
             "key": self.key,
             "name": self.name,
             "creator": {'fullname': self.creator.fullname, 'url': self.creator.profile_url},
-            "nodes": [{'title': x.title, 'url': x.url, 'scale': str(self.node_scale(x)) + 'px', 'imgUrl': self.node_icon(x)}
+            "nodes": [{'title': x.title, 'url': x.url, 'scale': str(self.node_scale(x)) + 'px', 'category': x.category}
                       for x in self.nodes if not x.is_deleted],
             "anonymous": self.anonymous
         }
